@@ -65,6 +65,7 @@ def select_parameters():
     rtsp_var1 = tk.StringVar()
     rtsp_var2 = tk.StringVar()
     rtsp_var3 = tk.StringVar()
+    rtsp_var4 = tk.StringVar() #Thêm trường nhập link rtsp 4
     model_path_var = tk.StringVar()
     alert_folder_var = tk.StringVar(value=os.path.join(os.getcwd(), "alert_images"))
     video_path_var = tk.StringVar()  # 🆕 Thêm biến chứa đường dẫn video mẫu
@@ -110,20 +111,26 @@ def select_parameters():
     tk.Label(root, text="RTSP Link 3:").grid(row=4, column=0, sticky="w", padx=5, pady=5)
     tk.Entry(root, textvariable=rtsp_var3, width=60).grid(row=4, column=1, padx=5, pady=5)
 
-    # Nhập đường dẫn file mô hình best.pt
-    tk.Label(root, text="Model Path (best.pt):").grid(row=5, column=0, sticky="w", padx=5, pady=5)
-    tk.Entry(root, textvariable=model_path_var, width=60).grid(row=5, column=1, padx=5, pady=5)
-    tk.Button(root, text="Browse", command=browse_model).grid(row=5, column=2, padx=5, pady=5)
+        # Giao diện nhập RTSP Link 4
+    tk.Label(root, text="RTSP Link 4:").grid(row=5, column=0, sticky="w", padx=5, pady=5)
+    tk.Entry(root, textvariable=rtsp_var4, width=60).grid(row=5, column=1, padx=5, pady=5)
+
+
+        # Nhập đường dẫn file mô hình best.pt
+    tk.Label(root, text="Model Path (best.pt):").grid(row=6, column=0, sticky="w", padx=5, pady=5)
+    tk.Entry(root, textvariable=model_path_var, width=60).grid(row=6, column=1, padx=5, pady=5)
+    tk.Button(root, text="Browse", command=browse_model).grid(row=6, column=2, padx=5, pady=5)
 
     # Nhập thư mục lưu ảnh cảnh báo
-    tk.Label(root, text="Alert Image Folder:").grid(row=6, column=0, sticky="w", padx=5, pady=5)
-    tk.Entry(root, textvariable=alert_folder_var, width=60).grid(row=6, column=1, padx=5, pady=5)
-    tk.Button(root, text="Browse", command=browse_folder).grid(row=6, column=2, padx=5, pady=5)
+    tk.Label(root, text="Alert Image Folder:").grid(row=7, column=0, sticky="w", padx=5, pady=5)
+    tk.Entry(root, textvariable=alert_folder_var, width=60).grid(row=7, column=1, padx=5, pady=5)
+    tk.Button(root, text="Browse", command=browse_folder).grid(row=7, column=2, padx=5, pady=5)
 
-# 🆕 Nhập đường dẫn video mẫu (sửa bố trí để không bị đè)
-    tk.Label(root, text="Video Test (nếu không có RTSP):").grid(row=7, column=0, sticky="w", padx=5, pady=10)
-    tk.Entry(root, textvariable=video_path_var, width=60).grid(row=7, column=1, padx=5, pady=10)
-    tk.Button(root, text="Browse", command=lambda: video_path_var.set(filedialog.askopenfilename(title="Chọn video mẫu", filetypes=[("Video Files", "*.mp4 *.avi *.mov")]))).grid(row=7, column=2, padx=5, pady=10)
+    # 🆕 Nhập đường dẫn video mẫu (sửa bố trí để không bị đè)
+    tk.Label(root, text="Video Test (nếu không có RTSP):").grid(row=8, column=0, sticky="w", padx=5, pady=10)
+    tk.Entry(root, textvariable=video_path_var, width=60).grid(row=8, column=1, padx=5, pady=10)
+    tk.Button(root, text="Browse", command=lambda: video_path_var.set(filedialog.askopenfilename(title="Chọn video mẫu", filetypes=[("Video Files", "*.mp4 *.avi *.mov")]))).grid(row=8, column=2, padx=5, pady=10)
+
        # 🆕 Nút Start: Kiểm tra RTSP, nếu trống thì dùng video mẫu
     def on_start():
         params["telegram_token"] = telegram_token_var.get()
@@ -338,27 +345,34 @@ def select_parameters():
     rtsp_var3 = tk.StringVar(value="rtsp://admin:pa123456@camera3_url?rtsp_transport=tcp")
     tk.Entry(root, textvariable=rtsp_var3, width=60).grid(row=4, column=1, padx=5, pady=5)
 
-    # Nhập đường dẫn model
-    tk.Label(root, text="Model Path (best.pt):").grid(row=5, column=0, sticky="w", padx=5, pady=5)
+        # Nhập RTSP Link 4
+    tk.Label(root, text="RTSP Link 4:").grid(row=5, column=0, sticky="w", padx=5, pady=5)
+    rtsp_var4 = tk.StringVar(value="rtsp://admin:pa123456@camera4_url?rtsp_transport=tcp")
+    tk.Entry(root, textvariable=rtsp_var4, width=60).grid(row=5, column=1, padx=5, pady=5)
+
+    # Nhập đường dẫn file mô hình best.pt
+    tk.Label(root, text="Model Path (best.pt):").grid(row=6, column=0, sticky="w", padx=5, pady=5)
     model_path_var = tk.StringVar()
-    tk.Entry(root, textvariable=model_path_var, width=60).grid(row=5, column=1, padx=5, pady=5)
-    tk.Button(root, text="Browse", command=lambda: model_path_var.set(filedialog.askopenfilename())).grid(row=5, column=2, padx=5, pady=5)
+    tk.Entry(root, textvariable=model_path_var, width=60).grid(row=6, column=1, padx=5, pady=5)
+    tk.Button(root, text="Browse", command=lambda: model_path_var.set(filedialog.askopenfilename())).grid(row=6, column=2, padx=5, pady=5)
 
     # Nhập thư mục ảnh cảnh báo
-    tk.Label(root, text="Alert Image Folder:").grid(row=6, column=0, sticky="w", padx=5, pady=5)
+    tk.Label(root, text="Alert Image Folder:").grid(row=7, column=0, sticky="w", padx=5, pady=5)
     alert_folder_var = tk.StringVar(value=os.path.join(os.getcwd(), "alert_images"))
-    tk.Entry(root, textvariable=alert_folder_var, width=60).grid(row=6, column=1, padx=5, pady=5)
-    tk.Button(root, text="Browse", command=lambda: alert_folder_var.set(filedialog.askdirectory())).grid(row=6, column=2, padx=5, pady=5)
-# 🆕 Nhập đường dẫn video mẫu
-    tk.Label(root, text="Video Test (nếu không có RTSP):").grid(row=7, column=0, sticky="w", padx=5, pady=5)
+    tk.Entry(root, textvariable=alert_folder_var, width=60).grid(row=7, column=1, padx=5, pady=5)
+    tk.Button(root, text="Browse", command=lambda: alert_folder_var.set(filedialog.askdirectory())).grid(row=7, column=2, padx=5, pady=5)
+
+    # 🆕 Nhập đường dẫn video mẫu
+    tk.Label(root, text="Video Test (nếu không có RTSP):").grid(row=8, column=0, sticky="w", padx=5, pady=5)
     video_path_var = tk.StringVar()
-    tk.Entry(root, textvariable=video_path_var, width=60).grid(row=7, column=1, padx=5, pady=5)
-    tk.Button(root, text="Browse", command=lambda: video_path_var.set(filedialog.askopenfilename(title="Chọn video mẫu", filetypes=[("Video Files", "*.mp4 *.avi *.mov")]))).grid(row=7, column=2, padx=5, pady=5)
+    tk.Entry(root, textvariable=video_path_var, width=60).grid(row=8, column=1, padx=5, pady=5)
+    tk.Button(root, text="Browse", command=lambda: video_path_var.set(filedialog.askopenfilename(title="Chọn video mẫu", filetypes=[("Video Files", "*.mp4 *.avi *.mov")]))).grid(row=8, column=2, padx=5, pady=5)
+
     # Nút Start: Lưu các thông tin và đóng cửa sổ
     def on_start():
         params["telegram_token"] = telegram_token_var.get()
         params["chat_id"] = chat_id_var.get()
-        params["rtsp_links"] = [rtsp_var1.get(), rtsp_var2.get(), rtsp_var3.get()]
+        params["rtsp_links"] = [rtsp_var1.get(), rtsp_var2.get(), rtsp_var3.get(), rtsp_var4.get()]  # 🆕 Thêm RTSP Link 4
         params["model_path"] = model_path_var.get()
         params["alert_folder"] = alert_folder_var.get()
         params["video_path"] = video_path_var.get() if not any(params["rtsp_links"]) else None  # 🆕 Nếu không có RTSP, dùng video test
