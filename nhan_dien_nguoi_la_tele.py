@@ -19,8 +19,9 @@ classes_to_alert = ["nguoi_la", "nguoi_do"]
 # Các hằng số xử lý
 MAX_RETRY = 5 
 PROCESSING_INTERVAL = 3    # Chạy inference mỗi 3 giây để giảm tải
-ALERT_INTERVAL = 60        # Cách nhau 60 giây giữa các lần cảnh báo
-REPEATED_ALERT_INTERVAL = 180  # 10 phút giữa các lần cảnh báo cùng một đối tượng
+ALERT_INTERVAL = 120        # Cách nhau 60 giây giữa các lần cảnh báo
+REPEATED_ALERT_INTERVAL = 300  # 10 phút giữa các lần cảnh báo cùng một đối tượng
+window_name = "Camera Feed"
 DISPLAY_WIDTH = 400        # Cửa sổ video hiển thị có độ rộng cố định (khoảng 4 inch - ví dụ 400 pixel)
 DISPLAY_HEIGHT = 300       # Chiều cao hiển thị (bạn có thể điều chỉnh)
 detected_objects = {}  # Lưu thông tin về các đối tượng đã phát hiện
@@ -30,7 +31,7 @@ last_alert_time = {}
 def send_alert_to_telegram(image, object_id):
     try:
         current_time = time.time()
-        alert_interval = 180  # 3 phút giữa các lần cảnh báo cùng một đối tượng
+        alert_interval = 300  # 3 phút giữa các lần cảnh báo cùng một đối tượng
 
         # Kiểm tra nếu đối tượng đã được cảnh báo gần đây
         if object_id in last_alert_time:
@@ -54,7 +55,6 @@ def send_alert_to_telegram(image, object_id):
     except Exception as e:
         logging.error(f"Lỗi khi gửi cảnh báo Telegram: {e}")
         return False
-
 # =================== HÀM GIAO DIỆN CHỌN THAM SỐ (Tkinter GUI) ===================
 def make_transparent(image_path, opacity=30):  # 🆕 Độ mờ 30% (có thể chỉnh thấp hơn)
     image = Image.open(image_path).convert("RGBA")  
@@ -238,6 +238,7 @@ def run_camera(rtsp_url, window_name, model_path, alert_folder, processing_inter
         return
 
     paused = False
+    freeze_frame = None  # Biến lưu ảnh dừng (freeze) khi tạm dừng
     last_inference = 0
     last_alert_time = 0
 
@@ -247,8 +248,8 @@ def run_camera(rtsp_url, window_name, model_path, alert_folder, processing_inter
     while True:
         time.sleep(0.1)
        # 🔹 Bỏ qua khung hình cũ để lấy khung hình mới nhất
-        cap.retrieve()
-        ret, frame = cap.read()
+        cap.grab()
+        ret, frame = cap.retrieve()
 
         if not ret:
             if rtsp_url:
@@ -277,30 +278,23 @@ def run_camera(rtsp_url, window_name, model_path, alert_folder, processing_inter
         # 🔹 Giữ nguyên phần chạy inference mỗi vài giây để giảm tải
         current_time = time.time()
         display_frame = frame.copy()
-        last_detected = None  # 🆕 Biến lưu trạng thái người đã được phát hiện
-        alert_detected = False
-        detected_classes = [] 
+
         if current_time - last_inference >= processing_interval:
             last_inference = current_time
             try:
                 results = model(display_frame)[0]
                 alert_detected = False
                 for box in results.boxes:
-                        x1, y1, x2, y2 = map(int, box.xyxy[0])
-                        class_name = model.names[int(box.cls[0])]
-                if class_name in classes_to_alert:
+                    cls_id = int(box.cls[0])
+                    conf = float(box.conf[0])
+                    class_name = model.names.get(cls_id, "unknown") if isinstance(model.names, dict) else model.names[cls_id]
+                    if class_name in classes_to_alert:
                         alert_detected = True
-                        detected_classes.append(class_name)  # 🆕 Lưu tất cả class
-                if class_name in classes_to_alert and (last_detected != class_name or current_time - last_alert_time >= ALERT_INTERVAL):
-                        last_detected = class_name  # 🆕 Cập nhật trạng thái người đã phát hiện
-                   # 🆕 Vẽ bounding box cho từng người
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
                         cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                        cv2.putText(display_frame, f"{class_name}", (x1, y1 - 10), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                        cv2.imshow(window_name, display_frame)  # 🆕 Đảm bảo hiển thị đúng ảnh đã xử lý
-                        # 🆕 In ra tọa độ để kiểm tra trên terminal
-                        print(f"Bounding Box: {x1}, {y1}, {x2}, {y2}")
-                if alert_detected and (current_time - last_alert_time >= ALERT_INTERVAL):
+                        cv2.putText(display_frame, f"{class_name} {conf:.2f}",
+                                    (x1, max(y1 - 10, 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    if alert_detected and (current_time - last_alert_time >= ALERT_INTERVAL):
                         filename = os.path.join(alert_folder, f"alert_{int(current_time)}.jpg")
                         cv2.imwrite(filename, display_frame)
                         logging.info(f"[{window_name}] Lưu ảnh cảnh báo: {filename}")
@@ -310,23 +304,37 @@ def run_camera(rtsp_url, window_name, model_path, alert_folder, processing_inter
 
             except Exception as e:
                 logging.error(f"[{window_name}] Lỗi khi inference: {e}")
-# Kiểm tra phím: 'p' để tạm dừng, 'q' để thoát
+
+        # --- BEGIN: Code cũ không xóa ---
+        # Kiểm tra phím: 'p' để tạm dừng, 'q' để thoát
         key = cv2.waitKey(1) & 0xFF
         if key == ord('p'):
             paused = not paused
+            # Khi chuyển sang trạng thái tạm dừng, lưu lại một freeze_frame từ frame hiện tại
+            if paused:
+                freeze_frame = frame.copy()
         if key == ord('q'):
             logging.info(f"[{window_name}] Người dùng nhấn 'q'. Thoát luồng.")
             break
 
         if paused:
-            pause_frame = frame.copy()
-            cv2.putText(pause_frame, "P to Pause Q to Quit", (10, 30),
+            # Sử dụng freeze_frame để hiển thị ảnh dừng; nếu freeze_frame không tồn tại thì dùng frame mới nhất
+            if freeze_frame is not None:
+                pause_frame = freeze_frame.copy()
+            else:
+                pause_frame = frame.copy()
+            cv2.putText(pause_frame, "TẠM DỪNG - Nhấn 'p' để tiếp tục", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
             cv2.imshow(window_name, pause_frame)
             continue
+        # --- END: Code cũ không xóa ---
+
+        cv2.imshow(window_name, display_frame)  # Hiển thị khung hình nếu không bị tạm dừng
+
     cap.release()
     cv2.destroyWindow(window_name)
     logging.info(f"[{window_name}] Đóng kết nối.")
+
 
 # =================== HÀM MAIN ===================
 def make_transparent(image_path, opacity=30):  # 🆕 Độ mờ 30% (có thể chỉnh thấp hơn)
