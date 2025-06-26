@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import filedialog
 import logging
+import numpy as np
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s:%(message)s",
@@ -22,8 +23,8 @@ classes_to_alert = ["nguoi_la", "nguoi_do"]
 
 # Các hằng số xử lý
 MAX_RETRY = 5 
-PROCESSING_INTERVAL = 0    # Chạy inference mỗi 1 giây để giảm tải
-ALERT_INTERVAL = 120        # Cách nhau 60 giây giữa các lần cảnh báo
+PROCESSING_INTERVAL = 3    # Chạy inference mỗi 1 giây để giảm tải
+ALERT_INTERVAL = 60        # Cách nhau 60 giây giữa các lần cảnh báo
 REPEATED_ALERT_INTERVAL = 300  # 5 phút giữa các lần cảnh báo cùng một đối tượng
 window_name = "Camera Feed"
 DISPLAY_WIDTH = 400        # Cửa sổ video hiển thị có độ rộng cố định (khoảng 4 inch - ví dụ 400 pixel)
@@ -31,14 +32,14 @@ DISPLAY_HEIGHT = 300       # Chiều cao hiển thị (bạn có thể điều c
 detected_objects = {}  # Lưu thông tin về các đối tượng đã phát hiện
 last_alert_time = {}
 has_lost_connection = False  # 🆕 Biến trạng thái để ngăn spam cảnh báo
-motion_check_interval = 1
+motion_check_interval = 5
 frame_idx = 0
-full_threshold = 3000
+full_threshold = 8000
 
-DURATION_THRESH = 0.5      # giây
+DURATION_THRESH = 2      # giây
 MOVE_THRESH     = 500       # pixel: vùng di chuyển nhỏ
 MATCH_THRESH    = 100       # pixel: để match box với tracker
-MAX_IDLE        = 0.5      # giây: xóa tracker không thấy update
+MAX_IDLE        = 1      # giây: xóa tracker không thấy update
 
 
 # =================== HÀM GỬI CẢNH BÁO QUA TELEGRAM ===================
@@ -82,7 +83,7 @@ def send_zone_alert_to_telegram(image, telegram_token, chat_id):
         _, img_encoded = cv2.imencode('.jpg', image)
         files = {'photo': ('zone_alert.jpg', img_encoded.tobytes(), 'image/jpeg')}
         url = f"https://api.telegram.org/bot{telegram_token}/sendPhoto"
-        data = {'chat_id': chat_id, 'caption': '🚧 CẢNH BÁO: Có người vào vùng nguy hiểm!'}
+        data = {'chat_id': chat_id, 'caption': '🚧 CẢNH BÁO: Có người đã vào vùng nguy hiểm!'}
         response = requests.post(url, files=files, data=data, timeout=10)
         return response.ok
     except Exception as e:
@@ -265,7 +266,7 @@ def send_alert_to_telegram(image, telegram_token, chat_id, object_id=None):
     except Exception as e:
         logging.error(f"Lỗi khi gửi ảnh Telegram (Unexpected): {e}")
         return False
-def send_zone_alert_to_telegram(image, telegram_token, chat_id, object_id=None):
+def send_zone_alert_to_telegram(image, telegram_token, chat_id):
     if not telegram_token or not chat_id:
         logging.error("Thiếu Token hoặc Chat ID khi gửi alert zone!")
         return False
@@ -312,10 +313,10 @@ def check_camera_connection(rtsp_url, window_name, telegram_token, chat_id):
         return False
     return True
 # ===================== Hàm chính chạy camera =====================
-def is_inside_zone(c, zone):
-    """Kiểm tra điểm c=(x,y) nằm trong zone=((x1,y1),(x2,y2))."""
-    (x1, y1), (x2, y2) = zone
-    return x1 <= c[0] <= x2 and y1 <= c[1] <= y2
+def is_inside_zone(c, polygon):
+    """Trả về True nếu point c=(x,y) nằm trong polygon."""
+    # pointPolygonTest >=0 nghĩa nằm trong hoặc trên biên
+    return cv2.pointPolygonTest(polygon, c, False) >= 0
 
 def run_camera(rtsp_url, window_name, model_path,
                alert_folder, processing_interval,
@@ -373,41 +374,36 @@ def run_camera(rtsp_url, window_name, model_path,
      # Thiết lập cửa sổ hiển thị
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     # 🆕 Khởi tạo biến lưu trạng thái vẽ vùng cảnh báo
+     # zone_data giờ sẽ lưu list điểm và polygon khi hoàn thành
     zone_data = {
-        "drawing": False,  # đang kéo chuột?
-        "ix": 0, "iy": 0,  # toạ độ bắt đầu
-        "zone": None       # ((x1,y1),(x2,y2))
-    }
+        "points": [],     # list các đỉnh (x,y)
+        "polygon": None}
 
     # 🆕 Hàm callback để vẽ vùng bằng chuột
-    def draw_zone(event, x, y, flags, param):
-        # param chính là enable_danger_zone (True/False)
-        if not param:
+    def draw_zone(event, x, y, flags, _):
+    # Chỉ vẽ khi đang ở mode vẽ và chưa hoàn thành polygon
+        if not enable_danger_zone or zone_data["polygon"] is not None:
             return
+
+    # Left‐click: thêm đỉnh
         if event == cv2.EVENT_LBUTTONDOWN:
-            zone_data["drawing"] = True
-            zone_data["ix"], zone_data["iy"] = x, y
-        elif event == cv2.EVENT_MOUSEMOVE and zone_data["drawing"]:
-            # optional: preview khung vuông khi kéo
-            tmp = frame.copy()
-            cv2.rectangle(tmp,
-                          (zone_data["ix"], zone_data["iy"]),
-                          (x, y), (0, 255, 255), 2)
-            cv2.imshow(window_name, tmp)
-        elif event == cv2.EVENT_LBUTTONUP:
-            zone_data["drawing"] = False
-            zone_data["zone"] = (
-                (min(zone_data["ix"], x), min(zone_data["iy"], y)),
-                (max(zone_data["ix"], x), max(zone_data["iy"], y))
-            )
-            logging.info(f"[{window_name}] Đã vẽ vùng cảnh báo: {zone_data['zone']}")
+            zone_data["points"].append((x, y))
+            logging.info(f"[{window_name}] +Vertex {(x,y)}")
+
+    # Right‐click: kết thúc polygon khi >=4 điểm
+        elif event == cv2.EVENT_RBUTTONDOWN:
+            if len(zone_data["points"]) >= 4:
+                zone_data["polygon"] = np.array(zone_data["points"], np.int32)
+                logging.info(f"[{window_name}] Polygon done: {zone_data['polygon']}")
+        else:
+            logging.warning(f"[{window_name}] Cần ít nhất 4 điểm, hiện có {len(zone_data['points'])}")
 
     # 🆕 Gán callback, param = enable_danger_zone
-    cv2.setMouseCallback(window_name, draw_zone, enable_danger_zone)
+    cv2.setMouseCallback(window_name, draw_zone)
     cap_fps = cap.get(cv2.CAP_PROP_FPS)
     logging.info(f"[{window_name}] FPS luồng: {cap_fps}")
     fgbg = cv2.createBackgroundSubtractorMOG2(history=100, varThreshold=50, detectShadows=True)
-    motion_check_interval = 1
+    motion_check_interval = 3
     frame_idx = 0
     consecutive_detections = 0
     detection_required = 1
@@ -461,26 +457,46 @@ def run_camera(rtsp_url, window_name, model_path,
         display_frame = frame.copy()
         
         # —— CHÈN VẼ VÙNG CẢNH BÁO ——
-        if enable_danger_zone and zone_data["zone"] is None:
-            # Chưa vẽ xong zone → chỉ hiển thị hướng dẫn
+        # Nếu đang bật vẽ zone mà chưa có polygon thì show hướng dẫn
+        if enable_danger_zone and zone_data["polygon"] is None:
+    # 1) Hướng dẫn
             cv2.putText(display_frame,
-                "Draw the danger zone by dragging the mouse, Press 'Q' to skip",
-                (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
+            "Left-click: add vertex | Right-click: finish (>4 pts) | Q: skip",
+            (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
+
+    # 2) Vẽ các đoạn nối giữa các điểm đã chọn
+            pts = zone_data["points"]
+            if len(pts) >= 2:
+                arr = np.array(pts, np.int32)
+                cv2.polylines(display_frame,
+                      [arr],
+                      isClosed=False,      # chưa đóng kín
+                      color=(0,255,255),
+                      thickness=2)
+    # 3) Vẽ các điểm đỉnh rõ hơn
+            for (x,y) in pts:
+                cv2.circle(display_frame, (x,y), 4, (0,255,255), -1)
+
+    # 4) Hiển thị & bắt phím
             cv2.imshow(window_name, display_frame)
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
-                enable_danger_zone = False    # bỏ qua vẽ zone
-            continue # Tiếp tục vòng lặp chính để chờ người dùng vẽ hoặc bỏ qua
-        
-# Nếu đã có zone, vẽ khung trên hình
-        if zone_data["zone"]:
-            cv2.rectangle(display_frame,
-                          zone_data["zone"][0],
-                          zone_data["zone"][1],
-                          (0,255,255), 2)
+                enable_danger_zone = False    # bỏ vẽ nếu nhấn Q
+            continue  # chờ thêm click
+
+# ——————— Khi polygon đã hoàn thành ———————
+        if zone_data["polygon"] is not None:
+            cv2.polylines(display_frame,
+                  [zone_data["polygon"]],
+                  isClosed=True,   # đóng kín
+                  color=(0,255,255),
+                  thickness=2)
+
+# … tiếp code xử lý inference, alert, hiển thị cuối cùng …
+        cv2.imshow(window_name, display_frame)
 
             # --- CHỈ SKIP MOTION/FRAME CHO RTSP ---
-            if rtsp_url:
+        if rtsp_url:
                 fgmask = fgbg.apply(frame)
                 motion_pixels = cv2.countNonZero(fgmask)
                 if motion_pixels < full_threshold:
@@ -500,7 +516,7 @@ def run_camera(rtsp_url, window_name, model_path,
 
             # 🔹 Chạy inference & tracking khi tới lượt 
             #    (Luôn chạy với Demo, RTSP theo interval)
-            if rtsp_url is None or current_time - last_inference >= processing_interval:
+        if rtsp_url is None or current_time - last_inference >= processing_interval:
                 last_inference = current_time
                 detections_this_frame = False
                 try:
@@ -523,36 +539,25 @@ def run_camera(rtsp_url, window_name, model_path,
                                         (x1, y1 - 5),
                                         cv2.FONT_HERSHEY_SIMPLEX,
                                         0.5, (200, 200, 200), 1)
-                            logging.info(
-                                f"[{window_name}] Detected {name} at {c} with conf={conf:.2f} "
-                                f"(stranger_thr=0.60, zone_thr=0.30, in_zone={in_zone})"
-                            )
 
                         # 2) Tính centroid và kiểm in_zone
                         c = ((x1 + x2)//2, (y1 + y2)//2)
                         in_zone = (
                             enable_danger_zone
-                            and zone_data["zone"]
-                            and is_inside_zone(c, zone_data["zone"])
-                        )
+                            and zone_data["polygon"] is not None
+                            and is_inside_zone(c, zone_data["polygon"]))
 
                         # 3) Quy định threshold alert:
                         is_stranger     = (name in classes_to_alert and conf >= 0.6)
-                        is_zone_violate = (in_zone and conf >= 0.3)
+                        is_zone_violate = (in_zone and conf >= 0.1)
                         if not (is_stranger or is_zone_violate):
-                            logging.debug(
-                                f"[{window_name}] → {name} at {c} below alert thresholds"
-                            )
                             continue
 
                         # 4) Nếu vi phạm zone → vẽ vàng + alert zone riêng
                         if is_zone_violate:
                             box_id = (c[0]//10, c[1]//10)
                             now = time.time()
-                            last = zone_last_alert.get(box_id, 0)
-                            logging.info(
-            f"[{window_name}] → {name} at {c} ENTERED ZONE with conf={conf:.2f}"
-        )
+                        last = zone_last_alert.get(box_id, 0)
     # nếu chưa alert bao giờ cho box_id này, hoặc đã qua 5 phút
                         if now - last >= ZONE_REPEAT_INTERVAL:
                             zone_last_alert[box_id] = now
@@ -561,14 +566,14 @@ def run_camera(rtsp_url, window_name, model_path,
                             cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0,255,255), 2)
                             cv2.putText(display_frame, "IN ZONE",
                                         (x1, max(y1-10,10)),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,255), 2)
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
                             send_zone_alert_to_telegram(display_frame.copy(), telegram_token, chat_id)
                         else:
         # Chỉ vẽ khung cho user vẫn ở zone, không gửi alert lặp
                             cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0,255,255), 2)
                             cv2.putText(display_frame, "IN ZONE",
                                         (x1, max(y1-10,10)),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,255), 2)
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
                             continue
                         # 5) Cuối cùng: stranger (nguoi_la/nguoi_do) → vẽ đỏ + alert bình thường
                         now = time.time()
